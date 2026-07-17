@@ -37,6 +37,8 @@ use self::scheme::Scheme2;
 pub use self::authority::Authority;
 pub use self::builder::Builder;
 pub use self::path::PathAndQueryWithFragment;
+#[allow(deprecated)]
+pub use self::path::PathAndQuery;
 pub use self::port::Port;
 pub use self::scheme::Scheme;
 
