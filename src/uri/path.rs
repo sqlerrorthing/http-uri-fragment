@@ -9,25 +9,22 @@ use crate::byte_str::ByteStr;
 
 /// Represents the path component of a URI
 #[derive(Clone)]
-pub struct PathAndQuery {
+pub struct PathAndQueryWithFragment {
     pub(super) data: ByteStr,
     pub(super) query: u16,
+    pub(super) fragment: u16,
 }
 
 const NONE: u16 = u16::MAX;
 
-impl PathAndQuery {
+impl PathAndQueryWithFragment {
     // Not public while `bytes` is unstable.
-    pub(super) fn from_shared(mut src: Bytes) -> Result<Self, InvalidUri> {
+    pub(super) fn from_shared(src: Bytes) -> Result<Self, InvalidUri> {
         let Scanned {
             query,
             fragment,
             is_maybe_not_utf8,
         } = scan_path_and_query(&src)?;
-
-        if let Some(i) = fragment {
-            src.truncate(i as usize);
-        }
 
         let data = if is_maybe_not_utf8 {
             ByteStr::from_utf8(src).map_err(|_| ErrorKind::InvalidUriChar)?
@@ -35,7 +32,7 @@ impl PathAndQuery {
             unsafe { ByteStr::from_utf8_unchecked(src) }
         };
 
-        Ok(PathAndQuery { data, query })
+        Ok(PathAndQueryWithFragment { data, query, fragment })
     }
 
     /// Convert a `PathAndQuery` from a static string.
@@ -51,7 +48,7 @@ impl PathAndQuery {
     ///
     /// ```
     /// # use http::uri::*;
-    /// let v = PathAndQuery::from_static("/hello?world");
+    /// let v = PathAndQueryWithFragment::from_static("/hello?world");
     ///
     /// assert_eq!(v.path(), "/hello");
     /// assert_eq!(v.query(), Some("world"));
@@ -61,13 +58,14 @@ impl PathAndQuery {
         match scan_path_and_query(src.as_bytes()) {
             Ok(Scanned {
                 query,
-                fragment: None,
+                fragment,
                 is_maybe_not_utf8: false,
-            }) => PathAndQuery {
+            }) => PathAndQueryWithFragment {
                 data: ByteStr::from_static(src),
                 query,
+                fragment
             },
-            // Yes, we reject fragments and non-utf8
+            // Yes, we reject non-utf8
             _ => panic!("static str is not valid path"),
         }
     }
@@ -81,30 +79,33 @@ impl PathAndQuery {
         T: AsRef<[u8]> + 'static,
     {
         if_downcast_into!(T, Bytes, src, {
-            return PathAndQuery::from_shared(src);
+            return PathAndQueryWithFragment::from_shared(src);
         });
 
-        PathAndQuery::try_from(src.as_ref())
+        PathAndQueryWithFragment::try_from(src.as_ref())
     }
 
     pub(super) fn empty() -> Self {
-        PathAndQuery {
+        PathAndQueryWithFragment {
             data: ByteStr::new(),
             query: NONE,
+            fragment: NONE
         }
     }
 
     pub(super) fn slash() -> Self {
-        PathAndQuery {
+        PathAndQueryWithFragment {
             data: ByteStr::from_static("/"),
             query: NONE,
+            fragment: NONE
         }
     }
 
     pub(super) fn star() -> Self {
-        PathAndQuery {
+        PathAndQueryWithFragment {
             data: ByteStr::from_static("*"),
             query: NONE,
+            fragment: NONE
         }
     }
 
@@ -126,7 +127,7 @@ impl PathAndQuery {
     /// ```
     /// # use http::uri::*;
     ///
-    /// let path_and_query: PathAndQuery = "/hello/world".parse().unwrap();
+    /// let path_and_query: PathAndQueryWithFragment = "/hello/world".parse().unwrap();
     ///
     /// assert_eq!(path_and_query.path(), "/hello/world");
     /// ```
@@ -166,7 +167,7 @@ impl PathAndQuery {
     ///
     /// ```
     /// # use http::uri::*;
-    /// let path_and_query: PathAndQuery = "/hello/world?key=value&foo=bar".parse().unwrap();
+    /// let path_and_query: PathAndQueryWithFragment = "/hello/world?key=value&foo=bar".parse().unwrap();
     ///
     /// assert_eq!(path_and_query.query(), Some("key=value&foo=bar"));
     /// ```
@@ -175,16 +176,50 @@ impl PathAndQuery {
     ///
     /// ```
     /// # use http::uri::*;
-    /// let path_and_query: PathAndQuery = "/hello/world".parse().unwrap();
+    /// let path_and_query: PathAndQueryWithFragment = "/hello/world".parse().unwrap();
     ///
     /// assert!(path_and_query.query().is_none());
     /// ```
     #[inline]
     pub fn query(&self) -> Option<&str> {
-        if self.query == NONE {
+        match (self.query, self.fragment) {
+            (NONE, _) => { None },
+            (query, NONE) => {
+                let i = query + 1;
+                Some(&self.data[i as usize..])
+            },
+            (query, fragment) => {
+                let i = query + 1;
+                Some(&self.data[i as usize..fragment as usize])
+            }
+        }
+    }
+
+    /// Get the fragment string of this `Uri`, starting after the `#`.
+    ///
+    /// ```notrust
+    /// abc://username:password@example.com:123/path/data?key=value&key2=value2#fragid1
+    ///                                                                         |-----|
+    ///                                                                            |
+    ///                                                                         fragment
+    /// ```
+    ///
+    /// # Examples
+    ///
+    /// Simple fragment
+    ///
+    /// ```
+    /// # use http::Uri;
+    /// let uri: Uri = "http://example.org/hello/world?key=value#fragid1".parse().unwrap();
+    ///
+    /// assert_eq!(uri.fragment(), Some("fragid1"));
+    /// ```
+    #[inline]
+    pub fn fragment(&self) -> Option<&str> {
+        if self.fragment == NONE {
             None
         } else {
-            let i = self.query + 1;
+            let i = self.fragment + 1;
             Some(&self.data[i as usize..])
         }
     }
@@ -197,7 +232,7 @@ impl PathAndQuery {
     ///
     /// ```
     /// # use http::uri::*;
-    /// let path_and_query: PathAndQuery = "/hello/world?key=value&foo=bar".parse().unwrap();
+    /// let path_and_query: PathAndQueryWithFragment = "/hello/world?key=value&foo=bar".parse().unwrap();
     ///
     /// assert_eq!(path_and_query.as_str(), "/hello/world?key=value&foo=bar");
     /// ```
@@ -206,7 +241,7 @@ impl PathAndQuery {
     ///
     /// ```
     /// # use http::uri::*;
-    /// let path_and_query: PathAndQuery = "/hello/world".parse().unwrap();
+    /// let path_and_query: PathAndQueryWithFragment = "/hello/world".parse().unwrap();
     ///
     /// assert_eq!(path_and_query.as_str(), "/hello/world");
     /// ```
@@ -220,15 +255,15 @@ impl PathAndQuery {
     }
 }
 
-impl TryFrom<&[u8]> for PathAndQuery {
+impl TryFrom<&[u8]> for PathAndQueryWithFragment {
     type Error = InvalidUri;
     #[inline]
     fn try_from(s: &[u8]) -> Result<Self, Self::Error> {
-        PathAndQuery::from_shared(Bytes::copy_from_slice(s))
+        PathAndQueryWithFragment::from_shared(Bytes::copy_from_slice(s))
     }
 }
 
-impl TryFrom<&str> for PathAndQuery {
+impl TryFrom<&str> for PathAndQueryWithFragment {
     type Error = InvalidUri;
     #[inline]
     fn try_from(s: &str) -> Result<Self, Self::Error> {
@@ -236,23 +271,23 @@ impl TryFrom<&str> for PathAndQuery {
     }
 }
 
-impl TryFrom<Vec<u8>> for PathAndQuery {
+impl TryFrom<Vec<u8>> for PathAndQueryWithFragment {
     type Error = InvalidUri;
     #[inline]
     fn try_from(vec: Vec<u8>) -> Result<Self, Self::Error> {
-        PathAndQuery::from_shared(vec.into())
+        PathAndQueryWithFragment::from_shared(vec.into())
     }
 }
 
-impl TryFrom<String> for PathAndQuery {
+impl TryFrom<String> for PathAndQueryWithFragment {
     type Error = InvalidUri;
     #[inline]
     fn try_from(s: String) -> Result<Self, Self::Error> {
-        PathAndQuery::from_shared(s.into())
+        PathAndQueryWithFragment::from_shared(s.into())
     }
 }
 
-impl TryFrom<&String> for PathAndQuery {
+impl TryFrom<&String> for PathAndQueryWithFragment {
     type Error = InvalidUri;
     #[inline]
     fn try_from(s: &String) -> Result<Self, Self::Error> {
@@ -260,7 +295,7 @@ impl TryFrom<&String> for PathAndQuery {
     }
 }
 
-impl FromStr for PathAndQuery {
+impl FromStr for PathAndQueryWithFragment {
     type Err = InvalidUri;
     #[inline]
     fn from_str(s: &str) -> Result<Self, InvalidUri> {
@@ -268,13 +303,13 @@ impl FromStr for PathAndQuery {
     }
 }
 
-impl fmt::Debug for PathAndQuery {
+impl fmt::Debug for PathAndQueryWithFragment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
 }
 
-impl fmt::Display for PathAndQuery {
+impl fmt::Display for PathAndQueryWithFragment {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !self.data.is_empty() {
             match self.data.as_bytes()[0] {
@@ -287,7 +322,7 @@ impl fmt::Display for PathAndQuery {
     }
 }
 
-impl hash::Hash for PathAndQuery {
+impl hash::Hash for PathAndQueryWithFragment {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.data.hash(state);
     }
@@ -295,102 +330,102 @@ impl hash::Hash for PathAndQuery {
 
 // ===== PartialEq / PartialOrd =====
 
-impl PartialEq for PathAndQuery {
+impl PartialEq for PathAndQueryWithFragment {
     #[inline]
-    fn eq(&self, other: &PathAndQuery) -> bool {
+    fn eq(&self, other: &PathAndQueryWithFragment) -> bool {
         self.data == other.data
     }
 }
 
-impl Eq for PathAndQuery {}
+impl Eq for PathAndQueryWithFragment {}
 
-impl PartialEq<str> for PathAndQuery {
+impl PartialEq<str> for PathAndQueryWithFragment {
     #[inline]
     fn eq(&self, other: &str) -> bool {
         self.as_str() == other
     }
 }
 
-impl PartialEq<PathAndQuery> for &str {
+impl PartialEq<PathAndQueryWithFragment> for &str {
     #[inline]
-    fn eq(&self, other: &PathAndQuery) -> bool {
+    fn eq(&self, other: &PathAndQueryWithFragment) -> bool {
         self == &other.as_str()
     }
 }
 
-impl PartialEq<&str> for PathAndQuery {
+impl PartialEq<&str> for PathAndQueryWithFragment {
     #[inline]
     fn eq(&self, other: &&str) -> bool {
         self.as_str() == *other
     }
 }
 
-impl PartialEq<PathAndQuery> for str {
+impl PartialEq<PathAndQueryWithFragment> for str {
     #[inline]
-    fn eq(&self, other: &PathAndQuery) -> bool {
+    fn eq(&self, other: &PathAndQueryWithFragment) -> bool {
         self == other.as_str()
     }
 }
 
-impl PartialEq<String> for PathAndQuery {
+impl PartialEq<String> for PathAndQueryWithFragment {
     #[inline]
     fn eq(&self, other: &String) -> bool {
         self.as_str() == other.as_str()
     }
 }
 
-impl PartialEq<PathAndQuery> for String {
+impl PartialEq<PathAndQueryWithFragment> for String {
     #[inline]
-    fn eq(&self, other: &PathAndQuery) -> bool {
+    fn eq(&self, other: &PathAndQueryWithFragment) -> bool {
         self.as_str() == other.as_str()
     }
 }
 
-impl PartialOrd for PathAndQuery {
+impl PartialOrd for PathAndQueryWithFragment {
     #[inline]
-    fn partial_cmp(&self, other: &PathAndQuery) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &PathAndQueryWithFragment) -> Option<cmp::Ordering> {
         self.as_str().partial_cmp(other.as_str())
     }
 }
 
-impl PartialOrd<str> for PathAndQuery {
+impl PartialOrd<str> for PathAndQueryWithFragment {
     #[inline]
     fn partial_cmp(&self, other: &str) -> Option<cmp::Ordering> {
         self.as_str().partial_cmp(other)
     }
 }
 
-impl PartialOrd<PathAndQuery> for str {
+impl PartialOrd<PathAndQueryWithFragment> for str {
     #[inline]
-    fn partial_cmp(&self, other: &PathAndQuery) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &PathAndQueryWithFragment) -> Option<cmp::Ordering> {
         self.partial_cmp(other.as_str())
     }
 }
 
-impl PartialOrd<&str> for PathAndQuery {
+impl PartialOrd<&str> for PathAndQueryWithFragment {
     #[inline]
     fn partial_cmp(&self, other: &&str) -> Option<cmp::Ordering> {
         self.as_str().partial_cmp(*other)
     }
 }
 
-impl PartialOrd<PathAndQuery> for &str {
+impl PartialOrd<PathAndQueryWithFragment> for &str {
     #[inline]
-    fn partial_cmp(&self, other: &PathAndQuery) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &PathAndQueryWithFragment) -> Option<cmp::Ordering> {
         self.partial_cmp(&other.as_str())
     }
 }
 
-impl PartialOrd<String> for PathAndQuery {
+impl PartialOrd<String> for PathAndQueryWithFragment {
     #[inline]
     fn partial_cmp(&self, other: &String) -> Option<cmp::Ordering> {
         self.as_str().partial_cmp(other.as_str())
     }
 }
 
-impl PartialOrd<PathAndQuery> for String {
+impl PartialOrd<PathAndQueryWithFragment> for String {
     #[inline]
-    fn partial_cmp(&self, other: &PathAndQuery) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &PathAndQueryWithFragment) -> Option<cmp::Ordering> {
         self.as_str().partial_cmp(other.as_str())
     }
 }
@@ -401,14 +436,14 @@ impl PartialOrd<PathAndQuery> for String {
 
 struct Scanned {
     query: u16,
-    fragment: Option<u16>,
+    fragment: u16,
     is_maybe_not_utf8: bool,
 }
 
 const fn scan_path_and_query(bytes: &[u8]) -> Result<Scanned, ErrorKind> {
     let mut i = 0;
     let mut query = NONE;
-    let mut fragment = None;
+    let mut fragment = NONE;
 
     let mut is_maybe_not_utf8 = false;
 
@@ -438,7 +473,7 @@ const fn scan_path_and_query(bytes: &[u8]) -> Result<Scanned, ErrorKind> {
                 break;
             }
             b'#' => {
-                fragment = Some(i as u16);
+                fragment = i as u16;
                 break;
             }
 
@@ -497,7 +532,7 @@ const fn scan_path_and_query(bytes: &[u8]) -> Result<Scanned, ErrorKind> {
                 }
 
                 b'#' => {
-                    fragment = Some(i as u16);
+                    fragment = i as u16;
                     break;
                 }
 
@@ -520,23 +555,23 @@ mod tests {
 
     #[test]
     fn equal_to_self_of_same_path() {
-        let p1: PathAndQuery = "/hello/world&foo=bar".parse().unwrap();
-        let p2: PathAndQuery = "/hello/world&foo=bar".parse().unwrap();
+        let p1: PathAndQueryWithFragment = "/hello/world&foo=bar".parse().unwrap();
+        let p2: PathAndQueryWithFragment = "/hello/world&foo=bar".parse().unwrap();
         assert_eq!(p1, p2);
         assert_eq!(p2, p1);
     }
 
     #[test]
     fn not_equal_to_self_of_different_path() {
-        let p1: PathAndQuery = "/hello/world&foo=bar".parse().unwrap();
-        let p2: PathAndQuery = "/world&foo=bar".parse().unwrap();
+        let p1: PathAndQueryWithFragment = "/hello/world&foo=bar".parse().unwrap();
+        let p2: PathAndQueryWithFragment = "/world&foo=bar".parse().unwrap();
         assert_ne!(p1, p2);
         assert_ne!(p2, p1);
     }
 
     #[test]
     fn equates_with_a_str() {
-        let path_and_query: PathAndQuery = "/hello/world&foo=bar".parse().unwrap();
+        let path_and_query: PathAndQueryWithFragment = "/hello/world&foo=bar".parse().unwrap();
         assert_eq!(&path_and_query, "/hello/world&foo=bar");
         assert_eq!("/hello/world&foo=bar", &path_and_query);
         assert_eq!(path_and_query, "/hello/world&foo=bar");
@@ -545,7 +580,7 @@ mod tests {
 
     #[test]
     fn not_equal_with_a_str_of_a_different_path() {
-        let path_and_query: PathAndQuery = "/hello/world&foo=bar".parse().unwrap();
+        let path_and_query: PathAndQueryWithFragment = "/hello/world&foo=bar".parse().unwrap();
         // as a reference
         assert_ne!(&path_and_query, "/hello&foo=bar");
         assert_ne!("/hello&foo=bar", &path_and_query);
@@ -556,29 +591,29 @@ mod tests {
 
     #[test]
     fn equates_with_a_string() {
-        let path_and_query: PathAndQuery = "/hello/world&foo=bar".parse().unwrap();
+        let path_and_query: PathAndQueryWithFragment = "/hello/world&foo=bar".parse().unwrap();
         assert_eq!(path_and_query, "/hello/world&foo=bar".to_string());
         assert_eq!("/hello/world&foo=bar".to_string(), path_and_query);
     }
 
     #[test]
     fn not_equal_with_a_string_of_a_different_path() {
-        let path_and_query: PathAndQuery = "/hello/world&foo=bar".parse().unwrap();
+        let path_and_query: PathAndQueryWithFragment = "/hello/world&foo=bar".parse().unwrap();
         assert_ne!(path_and_query, "/hello&foo=bar".to_string());
         assert_ne!("/hello&foo=bar".to_string(), path_and_query);
     }
 
     #[test]
     fn compares_to_self() {
-        let p1: PathAndQuery = "/a/world&foo=bar".parse().unwrap();
-        let p2: PathAndQuery = "/b/world&foo=bar".parse().unwrap();
+        let p1: PathAndQueryWithFragment = "/a/world&foo=bar".parse().unwrap();
+        let p2: PathAndQueryWithFragment = "/b/world&foo=bar".parse().unwrap();
         assert!(p1 < p2);
         assert!(p2 > p1);
     }
 
     #[test]
     fn compares_with_a_str() {
-        let path_and_query: PathAndQuery = "/b/world&foo=bar".parse().unwrap();
+        let path_and_query: PathAndQueryWithFragment = "/b/world&foo=bar".parse().unwrap();
         // by ref
         assert!(&path_and_query < "/c/world&foo=bar");
         assert!("/c/world&foo=bar" > &path_and_query);
@@ -594,7 +629,7 @@ mod tests {
 
     #[test]
     fn compares_with_a_string() {
-        let path_and_query: PathAndQuery = "/b/world&foo=bar".parse().unwrap();
+        let path_and_query: PathAndQueryWithFragment = "/b/world&foo=bar".parse().unwrap();
         assert!(path_and_query < "/c/world&foo=bar".to_string());
         assert!("/c/world&foo=bar".to_string() > path_and_query);
         assert!(path_and_query > "/a/world&foo=bar".to_string());
@@ -603,69 +638,88 @@ mod tests {
 
     #[test]
     fn ignores_valid_percent_encodings() {
-        assert_eq!("/a%20b", pq("/a%20b?r=1").path());
-        assert_eq!("qr=%31", pq("/a/b?qr=%31").query().unwrap());
+        assert_eq!("/a%20b", pqf("/a%20b?r=1").path());
+        assert_eq!("qr=%31", pqf("/a/b?qr=%31").query().unwrap());
     }
 
     #[test]
     fn ignores_invalid_percent_encodings() {
-        assert_eq!("/a%%b", pq("/a%%b?r=1").path());
-        assert_eq!("/aaa%", pq("/aaa%").path());
-        assert_eq!("/aaa%", pq("/aaa%?r=1").path());
-        assert_eq!("/aa%2", pq("/aa%2").path());
-        assert_eq!("/aa%2", pq("/aa%2?r=1").path());
-        assert_eq!("qr=%3", pq("/a/b?qr=%3").query().unwrap());
+        assert_eq!("/a%%b", pqf("/a%%b?r=1").path());
+        assert_eq!("/aaa%", pqf("/aaa%").path());
+        assert_eq!("/aaa%", pqf("/aaa%?r=1").path());
+        assert_eq!("/aa%2", pqf("/aa%2").path());
+        assert_eq!("/aa%2", pqf("/aa%2?r=1").path());
+        assert_eq!("qr=%3", pqf("/a/b?qr=%3").query().unwrap());
     }
 
     #[test]
     fn allow_utf8_in_path() {
-        assert_eq!("/🍕", pq("/🍕").path());
+        assert_eq!("/🍕", pqf("/🍕").path());
     }
 
     #[test]
     fn allow_utf8_in_query() {
-        assert_eq!(Some("pizza=🍕"), pq("/test?pizza=🍕").query());
+        assert_eq!(Some("pizza=🍕"), pqf("/test?pizza=🍕").query());
     }
 
     #[test]
     fn rejects_invalid_utf8_in_path() {
-        PathAndQuery::try_from(&[b'/', 0xFF][..]).expect_err("reject invalid utf8");
+        PathAndQueryWithFragment::try_from(&[b'/', 0xFF][..]).expect_err("reject invalid utf8");
     }
 
     #[test]
     fn rejects_invalid_utf8_in_query() {
-        PathAndQuery::try_from(&[b'/', b'a', b'?', 0xFF][..]).expect_err("reject invalid utf8");
+        PathAndQueryWithFragment::try_from(&[b'/', b'a', b'?', 0xFF][..]).expect_err("reject invalid utf8");
     }
 
     #[test]
     fn rejects_empty_string() {
-        PathAndQuery::try_from("").expect_err("reject empty str");
+        PathAndQueryWithFragment::try_from("").expect_err("reject empty str");
     }
 
     #[test]
     fn requires_starting_with_slash() {
-        PathAndQuery::try_from("sneaky").expect_err("reject missing slash");
+        PathAndQueryWithFragment::try_from("sneaky").expect_err("reject missing slash");
     }
 
     #[test]
     fn rejects_del_in_path() {
-        PathAndQuery::try_from(&[b'/', 0x7F][..]).expect_err("reject DEL");
+        PathAndQueryWithFragment::try_from(&[b'/', 0x7F][..]).expect_err("reject DEL");
     }
 
     #[test]
     fn rejects_del_in_query() {
-        PathAndQuery::try_from(&[b'/', b'a', b'?', 0x7F][..]).expect_err("reject DEL");
+        PathAndQueryWithFragment::try_from(&[b'/', b'a', b'?', 0x7F][..]).expect_err("reject DEL");
     }
 
     #[test]
     fn json_is_fine() {
         assert_eq!(
             r#"/{"bread":"baguette"}"#,
-            pq(r#"/{"bread":"baguette"}"#).path()
+            pqf(r#"/{"bread":"baguette"}"#).path()
         );
     }
 
-    fn pq(s: &str) -> PathAndQuery {
+    #[test]
+    fn test_fragment_parsing() {
+        let url = pqf("/page?search=cats#result-4");
+        assert_eq!(url.query(), Some("search=cats"));
+        assert_eq!(url.fragment(), Some("result-4"));
+
+        let url_no_query = pqf("/page#about");
+        assert_eq!(url_no_query.query(), None);
+        assert_eq!(url_no_query.fragment(), Some("about"));
+
+        let url_no_fragment = pqf("/page?search=cats");
+        assert_eq!(url_no_fragment.query(), Some("search=cats"));
+        assert_eq!(url_no_fragment.fragment(), None);
+
+        let url_pure_path = pqf("/page");
+        assert_eq!(url_pure_path.query(), None);
+        assert_eq!(url_pure_path.fragment(), None);
+    }
+
+    fn pqf(s: &str) -> PathAndQueryWithFragment {
         s.parse().expect(&format!("parsing {}", s))
     }
 }

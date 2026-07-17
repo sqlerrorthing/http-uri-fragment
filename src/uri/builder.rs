@@ -1,6 +1,6 @@
 use std::convert::TryInto;
 
-use super::{Authority, Parts, PathAndQuery, Scheme};
+use super::{Authority, Parts, PathAndQueryWithFragment, Scheme};
 use crate::Uri;
 
 /// A builder for `Uri`s.
@@ -92,8 +92,8 @@ impl Builder {
     /// ```
     pub fn path_and_query<T>(self, p_and_q: T) -> Self
     where
-        T: TryInto<PathAndQuery>,
-        <T as TryInto<PathAndQuery>>::Error: Into<crate::Error>,
+        T: TryInto<PathAndQueryWithFragment>,
+        <T as TryInto<PathAndQueryWithFragment>>::Error: Into<crate::Error>,
     {
         self.map(move |mut parts| {
             let p_and_q = match p_and_q.try_into() {
@@ -101,7 +101,7 @@ impl Builder {
                 Err(err) => {
                     let err = err.into();
                     if err.is_empty_uri() {
-                        PathAndQuery::empty()
+                        PathAndQueryWithFragment::empty()
                     } else {
                         return Err(err);
                     }
@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn empty_path_and_query_remains_strict() {
-        assert!(PathAndQuery::try_from("").is_err());
+        assert!(PathAndQueryWithFragment::try_from("").is_err());
     }
 
     #[test]

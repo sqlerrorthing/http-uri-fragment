@@ -36,7 +36,7 @@ use self::scheme::Scheme2;
 
 pub use self::authority::Authority;
 pub use self::builder::Builder;
-pub use self::path::PathAndQuery;
+pub use self::path::PathAndQueryWithFragment;
 pub use self::port::Port;
 pub use self::scheme::Scheme;
 
@@ -96,7 +96,7 @@ mod tests;
 pub struct Uri {
     scheme: Scheme,
     authority: Authority,
-    path_and_query: PathAndQuery,
+    path_and_query_with_fragment: PathAndQueryWithFragment,
 }
 
 /// The various parts of a URI.
@@ -111,7 +111,7 @@ pub struct Parts {
     pub authority: Option<Authority>,
 
     /// The origin-form component of a URI
-    pub path_and_query: Option<PathAndQuery>,
+    pub path_and_query: Option<PathAndQueryWithFragment>,
 
     /// Allow extending in the future
     _priv: (),
@@ -264,13 +264,13 @@ impl Uri {
 
         let path_and_query = match src.path_and_query {
             Some(path_and_query) => path_and_query,
-            None => PathAndQuery::empty(),
+            None => PathAndQueryWithFragment::empty(),
         };
 
         Ok(Uri {
             scheme,
             authority,
-            path_and_query,
+            path_and_query_with_fragment: path_and_query,
         })
     }
 
@@ -306,14 +306,14 @@ impl Uri {
                     return Ok(Uri {
                         scheme: Scheme::empty(),
                         authority: Authority::empty(),
-                        path_and_query: PathAndQuery::slash(),
+                        path_and_query_with_fragment: PathAndQueryWithFragment::slash(),
                     });
                 }
                 b'*' => {
                     return Ok(Uri {
                         scheme: Scheme::empty(),
                         authority: Authority::empty(),
-                        path_and_query: PathAndQuery::star(),
+                        path_and_query_with_fragment: PathAndQueryWithFragment::star(),
                     });
                 }
                 _ => {
@@ -322,7 +322,7 @@ impl Uri {
                     return Ok(Uri {
                         scheme: Scheme::empty(),
                         authority,
-                        path_and_query: PathAndQuery::empty(),
+                        path_and_query_with_fragment: PathAndQueryWithFragment::empty(),
                     });
                 }
             },
@@ -333,7 +333,7 @@ impl Uri {
             return Ok(Uri {
                 scheme: Scheme::empty(),
                 authority: Authority::empty(),
-                path_and_query: PathAndQuery::from_shared(s)?,
+                path_and_query_with_fragment: PathAndQueryWithFragment::from_shared(s)?,
             });
         }
 
@@ -393,9 +393,9 @@ impl Uri {
 
     /// Returns the path & query components of the Uri
     #[inline]
-    pub fn path_and_query(&self) -> Option<&PathAndQuery> {
+    pub fn path_and_query(&self) -> Option<&PathAndQueryWithFragment> {
         if !self.scheme.inner.is_none() || self.authority.data.is_empty() {
-            Some(&self.path_and_query)
+            Some(&self.path_and_query_with_fragment)
         } else {
             None
         }
@@ -438,7 +438,7 @@ impl Uri {
     #[inline]
     pub fn path(&self) -> &str {
         if self.has_path() {
-            self.path_and_query.path()
+            self.path_and_query_with_fragment.path()
         } else {
             ""
         }
@@ -698,11 +698,35 @@ impl Uri {
     /// ```
     #[inline]
     pub fn query(&self) -> Option<&str> {
-        self.path_and_query.query()
+        self.path_and_query_with_fragment.query()
+    }
+
+    /// Get the fragment string of this `Uri`, starting after the `#`.
+    ///
+    /// ```notrust
+    /// abc://username:password@example.com:123/path/data?key=value&key2=value2#fragid1
+    ///                                                                         |-----|
+    ///                                                                            |
+    ///                                                                         fragment
+    /// ```
+    ///
+    /// # Examples
+    ///
+    /// Simple fragment
+    ///
+    /// ```
+    /// # use http::Uri;
+    /// let uri: Uri = "http://example.org/hello/world?key=value#fragid1".parse().unwrap();
+    ///
+    /// assert_eq!(uri.fragment(), Some("fragid1"));
+    /// ```
+    #[inline]
+    pub fn fragment(&self) -> Option<&str> {
+        self.path_and_query_with_fragment.fragment()
     }
 
     fn has_path(&self) -> bool {
-        !self.path_and_query.data.is_empty() || !self.scheme.inner.is_none()
+        !self.path_and_query_with_fragment.data.is_empty() || !self.scheme.inner.is_none()
     }
 }
 
@@ -775,18 +799,18 @@ impl From<Authority> for Uri {
         Self {
             scheme: Scheme::empty(),
             authority,
-            path_and_query: PathAndQuery::empty(),
+            path_and_query_with_fragment: PathAndQueryWithFragment::empty(),
         }
     }
 }
 
 /// Convert a `PathAndQuery` into a `Uri`.
-impl From<PathAndQuery> for Uri {
-    fn from(path_and_query: PathAndQuery) -> Self {
+impl From<PathAndQueryWithFragment> for Uri {
+    fn from(path_and_query: PathAndQueryWithFragment) -> Self {
         Self {
             scheme: Scheme::empty(),
             authority: Authority::empty(),
-            path_and_query,
+            path_and_query_with_fragment: path_and_query,
         }
     }
 }
@@ -795,7 +819,7 @@ impl From<PathAndQuery> for Uri {
 impl From<Uri> for Parts {
     fn from(src: Uri) -> Self {
         let path_and_query = if src.has_path() {
-            Some(src.path_and_query)
+            Some(src.path_and_query_with_fragment)
         } else {
             None
         };
@@ -859,7 +883,7 @@ fn parse_full(mut s: Bytes) -> Result<Uri, InvalidUri> {
         return Ok(Uri {
             scheme: scheme.into(),
             authority,
-            path_and_query: PathAndQuery::empty(),
+            path_and_query_with_fragment: PathAndQueryWithFragment::empty(),
         });
     }
 
@@ -875,15 +899,15 @@ fn parse_full(mut s: Bytes) -> Result<Uri, InvalidUri> {
 
     // When absolute, path is coered to / if empty.
     let path_and_query = if s.is_empty() {
-        PathAndQuery::slash()
+        PathAndQueryWithFragment::slash()
     } else {
-        PathAndQuery::from_shared(s)?
+        PathAndQueryWithFragment::from_shared(s)?
     };
 
     Ok(Uri {
         scheme: scheme.into(),
         authority,
-        path_and_query,
+        path_and_query_with_fragment: path_and_query,
     })
 }
 
@@ -1024,7 +1048,7 @@ impl Default for Uri {
         Uri {
             scheme: Scheme::empty(),
             authority: Authority::empty(),
-            path_and_query: PathAndQuery::slash(),
+            path_and_query_with_fragment: PathAndQueryWithFragment::slash(),
         }
     }
 }
