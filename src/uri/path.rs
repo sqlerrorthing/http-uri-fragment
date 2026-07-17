@@ -7,6 +7,10 @@ use bytes::Bytes;
 use super::{ErrorKind, InvalidUri};
 use crate::byte_str::ByteStr;
 
+#[allow(dead_code)]
+#[deprecated(note = "use `PathAndQueryWithFragment` instead")]
+pub type PathAndQuery = PathAndQueryWithFragment;
+
 /// Represents the path component of a URI
 #[derive(Clone)]
 pub struct PathAndQueryWithFragment {
